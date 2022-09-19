@@ -21,11 +21,11 @@ LOGGER = logging.getLogger(__file__)
 
 class Transpiler:
     def __init__(
-        self,
-        select_field: Optional[str],
-        has_header: bool,
-        use_auto_quote: bool,
-        filter_str: Optional[str],
+            self,
+            select_field: Optional[str],
+            has_header: bool,
+            use_auto_quote: bool,
+            filter_str: Optional[str],
     ):
         self._print_field_statement = None
         self.select_field = select_field
@@ -110,19 +110,18 @@ class Transpiler:
 
 def extract_last_referenced_field(state: AssignmentState) -> str:
     assert state.last_field_num is not None
-    _field = f"{FIELD_VAR_NAME}{state.last_field_num}"
-    # cast
     if state.last_accessor_convert is AccessorConvert.NoOp:
-        out = f"{_field}"
+        access_caster = ""
     elif state.last_accessor_convert is AccessorConvert.AsStr:
-        out = f"str({_field})"
+        access_caster = ".as_str"
     elif state.last_accessor_convert is AccessorConvert.AsFloat:
-        out = f"float({_field})"
+        access_caster = ".as_float"
     elif state.last_accessor_convert is AccessorConvert.AsInt:
-        out = f"int({_field})"
+        access_caster = ".as_int"
     else:
-        raise RuntimeError(state.last_accessor_convert, _field)
+        raise RuntimeError(state.last_accessor_convert, f"{FIELD_VAR_NAME}{state.last_field_num}")
 
+    out = f"{FIELD_VAR_NAME}{access_caster}{state.last_field_num}"
     state.clear_referenced_field()
     return out
 
@@ -144,7 +143,7 @@ def _process_accessor_token(content: str, state: AssignmentState):
 
 
 def preprocess_full_statements(
-    statement: str, use_auto_quote: bool
+        statement: str, use_auto_quote: bool
 ) -> [str, List[str]]:
     """
     Preprocess any number of statement, including assignment statement.

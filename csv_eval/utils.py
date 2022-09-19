@@ -11,15 +11,30 @@ class ExpandableList(UserList):
     def add_extra_headers(cls, extra_headers):
         cls.__extra_headers = extra_headers
 
-    def __init__(self, initlist, is_header=False):
+    def __init__(self, initlist, is_header=False, access_cast=lambda x: x):
         super().__init__(initlist)
-        self.__is_header = is_header
+        self.access_cast = access_cast
         if is_header:
             self.__class__.__stored_header = {
                 key: i
                 for i, key in enumerate(self.data + self.__class__.__extra_headers)
             }
             self.extend(self.__extra_headers)
+
+    @property
+    def as_float(self):
+        proxy = self.__class__(self, access_cast=float)
+        return proxy
+
+    @property
+    def as_int(self):
+        proxy = self.__class__(self, access_cast=int)
+        return proxy
+
+    @property
+    def as_str(self):
+        proxy = self.__class__(self, access_cast=str)
+        return proxy
 
     def __search_for_extra_header_when_headers_are_off(self, index: str):
         # look at the extra header and see if we can find a match
@@ -55,7 +70,7 @@ class ExpandableList(UserList):
                 item = self.__search_for_extra_header_when_headers_are_off(item)
             else:
                 item = self.__stored_header[item]
-        return super().__getitem__(item)
+        return self.access_cast(super().__getitem__(item))
 
     def __repr__(self):
         return ",".join(map(str, self))
