@@ -15,18 +15,19 @@ from csv_eval.lexer_and_parser import (
     regex_pythonic_slice,
 )
 from csv_eval.utils import FIELD_VAR_NAME, ExpandableList
-
-LOGGER = logging.getLogger(__file__)
+from csv_eval.utils import LOGGER
 
 
 class Transpiler:
     def __init__(
-            self,
-            select_field: Optional[str],
-            has_header: bool,
-            use_auto_quote: bool,
-            filter_str: Optional[str],
+        self,
+        args,
+        select_field: Optional[str],
+        has_header: bool,
+        use_auto_quote: bool,
+        filter_str: Optional[str],
     ):
+        self.args = args
         self._print_field_statement = None
         self.select_field = select_field
         self.has_header = has_header
@@ -34,7 +35,7 @@ class Transpiler:
         self.use_auto_quote = use_auto_quote
         self.extra_headers = []
 
-    @lru_cache
+    @lru_cache(maxsize=32)
     def get_print_field_statement(self):
         if self.select_field is not None:
             fields_idx_to_print = self.select_field.split(",")
@@ -62,31 +63,33 @@ class Transpiler:
         self.extra_headers = extra_headers
 
     def get_pyp_args(self):
-        pyp_args = [
-            "-b",
-            inspect.getsource(ExpandableList),
-        ]
+        expandable_list_init = f"{FIELD_VAR_NAME} = {ExpandableList.__name__}();"
+        if self.has_header:
+            expandable_list_init += f"{FIELD_VAR_NAME}._set_header_content(next(sys.stdin).rstrip('\\n').split(','), extra_headers={self.extra_headers});"
+            expandable_list_init += self.get_print_field_statement()
+
+        pyp_args = []
         if self.select_field is not None:
             pyp_args.extend(["-b", inspect.getsource(collect_output_fields)])
-        if len(self.extra_headers) > 0:
-            pyp_args.extend(
-                [
-                    "-b",
-                    f"{ExpandableList.__name__}."
-                    f"{ExpandableList.add_extra_headers.__name__}("
-                    f"{self.extra_headers})",
-                ]
-            )
+        pyp_args.extend(
+            [
+                "-b",
+                inspect.getsource(ExpandableList),
+                "-b",
+                expandable_list_init,
+            ]
+        )
 
         return pyp_args
 
     def transpile(self, preprocessed_statements: str):
         is_header_input = "i==0" if self.has_header else "False"
         return f"""\
-{FIELD_VAR_NAME}={ExpandableList.__name__}(x.split(','), is_header={is_header_input});
-{self.get_header_logic()}
-{self.get_filter_logic()}
+{FIELD_VAR_NAME}._set_data(x.split(','))
+#{self.get_header_logic()}
+{self.get_filter_logic(self.args.filter)}
 {preprocessed_statements}
+{self.get_filter_logic(self.args.after_filter)}
 {self.get_print_field_statement()}
 """
 
@@ -99,16 +102,16 @@ class Transpiler:
             return f"if i == 0: {self.get_print_field_statement()}; continue"
         return ""
 
-    def get_filter_logic(self):
-        if self.filter_str is None:
+    def get_filter_logic(self, filter_str):
+        if filter_str is None:
             return ""
-        content = preprocess_field_only(
-            self.filter_str, use_auto_quote=self.use_auto_quote
-        )
+        content = preprocess_full_statements(
+            filter_str, use_auto_quote=self.use_auto_quote
+        )[0].replace("\n", "")
         return f"if not ({content}): continue"
 
 
-def extract_last_referenced_field(state: AssignmentState) -> str:
+def extract_last_referenced_field(state: AssignmentState, clear: bool = True) -> str:
     assert state.last_field_num is not None
     if state.last_accessor_convert is AccessorConvert.NoOp:
         access_caster = ""
@@ -119,10 +122,13 @@ def extract_last_referenced_field(state: AssignmentState) -> str:
     elif state.last_accessor_convert is AccessorConvert.AsInt:
         access_caster = ".as_int"
     else:
-        raise RuntimeError(state.last_accessor_convert, f"{FIELD_VAR_NAME}{state.last_field_num}")
+        raise RuntimeError(
+            state.last_accessor_convert, f"{FIELD_VAR_NAME}{state.last_field_num}"
+        )
 
     out = f"{FIELD_VAR_NAME}{access_caster}{state.last_field_num}"
-    state.clear_referenced_field()
+    if clear:
+        state.clear_referenced_field()
     return out
 
 
@@ -143,7 +149,7 @@ def _process_accessor_token(content: str, state: AssignmentState):
 
 
 def preprocess_full_statements(
-        statement: str, use_auto_quote: bool
+    statement: str, use_auto_quote: bool
 ) -> [str, List[str]]:
     """
     Preprocess any number of statement, including assignment statement.
@@ -159,24 +165,33 @@ def preprocess_full_statements(
         for token, content in pygments.lex(statement, lexer):
             if token is Token.Text.Whitespace:
                 continue
-            LOGGER.debug("Visit token %s with content %s", token, content)
+            LOGGER.debug("Visit token %s with content '%s'", token, content)
             if token is Token.AccessorLookLikeRawStr:
                 if use_auto_quote:
                     content = replace_raw_string_inside_square_bracket(content)
+                    LOGGER.debug("autoquote raw str as %s", content)
 
                 # process it again as token accessor
                 token = Token.Accessor
 
             if token is Token.Accessor:
                 _process_accessor_token(content, state)
+                transpiled_code += extract_last_referenced_field(state, clear=False)
+                LOGGER.debug("added accessor as %s", content)
 
             elif token is Token.AccessorAppend:
-                new_cols_headers.append(f"_{len(new_cols_headers) + 1}")
+                # content is in the form of _[+{...}]
+                new_col_header = content[3:-1].rstrip()
+                if len(new_col_header) == 0:  # i.e. only a plus sign + is given
+                    new_col_header = f"_{len(new_cols_headers) + 1}"
+                new_cols_headers.append(new_col_header)
                 state.last_field_num = f"['{new_cols_headers[-1]}']"
                 state.last_accessor_convert = AccessorConvert.NoOp
+                transpiled_code += extract_last_referenced_field(state, clear=False)
+                LOGGER.debug("added accessor-append as %s", content)
 
             elif token is Token.AssignmentOperator:
-                transpiled_code += f"{FIELD_VAR_NAME}{state.last_field_num}"
+                # transpiled_code += f"{FIELD_VAR_NAME}{state.last_field_num}"
                 transpiled_code += "="
                 if content != "=":
                     # cast
@@ -192,9 +207,10 @@ def preprocess_full_statements(
                 transpiled_code += content
 
             else:
-                if not state.at_lvalue:
-                    if state.last_field_num is not None:
-                        transpiled_code += extract_last_referenced_field(state)
+                # if not state.at_lvalue:
+                #     if state.last_field_num is not None:
+                #         transpiled_code += extract_last_referenced_field(state)
+                #         LOGGER.debug("appended non-added reference field.")
                 transpiled_code += content
 
             # last_token = token
@@ -238,7 +254,8 @@ def collect_output_fields(*fields_to_print) -> str:
             out.extend(field)
         else:
             out.append(field)
-    return ",".join(map(str, out))
+    return ",".join(out)
+    # return ",".join(map(str, out))
 
 
 def replace_raw_string_inside_square_bracket(content):

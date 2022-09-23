@@ -5,10 +5,10 @@ import sys
 import argcomplete
 import pyp
 
+from csv_eval.utils import LOGGER
 from csv_eval._impl import preprocess_full_statements, Transpiler
 from csv_eval._version import __version__
 
-LOGGER = logging.getLogger(__file__)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("statements", type=str, help="Python eval statements", nargs="?")
@@ -24,7 +24,14 @@ parser.add_argument("--debug", action="store_true")
 parser.add_argument(
     "-f",
     "--filter",
-    help="Filtering based on line",
+    help="Filtering based on line, before the processing",
+    type=str,
+)
+
+parser.add_argument(
+    "-af",
+    "--after-filter",
+    help="Filtering based on line, after the processing",
     type=str,
 )
 
@@ -32,7 +39,7 @@ parser.add_argument(
 def run():
     # argcomplete.autocomplete(parser)
     _args = parser.parse_args()
-    if sys.stdin.isatty():
+    if sys.stdin.isatty() and not _args.explain:
         parser.print_usage()
         print(f"{parser.prog}: there was no stdin for input.")
         exit(1)
@@ -51,6 +58,7 @@ def run():
     LOGGER.debug("Input statement was %s", _args.statements)
 
     transpiler = Transpiler(
+        _args,
         select_field=_args.select,
         has_header=_args.has_header,
         use_auto_quote=_args.auto_quote_str_indexer,

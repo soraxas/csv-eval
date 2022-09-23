@@ -37,6 +37,7 @@ setup(
         "pandas",
         "numpy",
         "pygments",
+        "dataclasses",
     ],
     entry_points={
         "console_scripts": [

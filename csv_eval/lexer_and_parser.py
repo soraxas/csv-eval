@@ -14,7 +14,7 @@ class CsvEvalLexer(RegexLexer):
 
     tokens = {
         "root": [
-            (r"[sfix]\[[ ]*\+[ ]*\]", Token.AccessorAppend),
+            (r"[sfix]\[[ ]*\+[^]]*[ ]*\]", Token.AccessorAppend),
             (r"[sfix]\[" f"{regex_pythonic_slice}" r"\]", Token.Accessor),
             (r"[sfix]\[" f"{regex_like_raw_str}" r"\]", Token.AccessorLookLikeRawStr),
             (r"[sfix]\[[^]]+]", Token.Accessor),
