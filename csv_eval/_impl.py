@@ -1,8 +1,8 @@
+import argparse
 import inspect
-import logging
 import re
 from functools import lru_cache
-from typing import Optional, List
+from typing import List
 
 import pygments
 from pygments.token import Token
@@ -21,40 +21,32 @@ from csv_eval.utils import LOGGER
 class Transpiler:
     def __init__(
         self,
-        args,
-        select_field: Optional[str],
-        has_header: bool,
-        use_auto_quote: bool,
-        filter_str: Optional[str],
+        args: argparse.Namespace,
     ):
         self.args = args
         self._print_field_statement = None
-        self.select_field = select_field
-        self.has_header = has_header
-        self.filter_str = filter_str
-        self.use_auto_quote = use_auto_quote
         self.extra_headers = []
 
     @lru_cache(maxsize=32)
     def get_print_field_statement(self):
-        if self.select_field is not None:
-            fields_idx_to_print = self.select_field.split(",")
+        if self.args.select is not None:
+            fields_idx_to_print = self.args.select.split(",")
 
-            if self.use_auto_quote:
+            if self.args.auto_quote_raw_str:
                 fields_idx_to_print = (self.auto_quote(s) for s in fields_idx_to_print)
             _collected_print_statement = ",".join(
                 f"{FIELD_VAR_NAME}[{i}]" for i in fields_idx_to_print
             )
             _print_field_statement = (
-                f"print({collect_output_fields.__name__}"
-                f"({_collected_print_statement}))"
+                f"print(','.join({collect_output_fields.__name__}"
+                f"({_collected_print_statement})))"
             )
         else:
             _print_field_statement = f"print({FIELD_VAR_NAME})"
         return _print_field_statement
 
     def auto_quote(self, string):
-        if self.use_auto_quote:
+        if self.args.auto_quote_raw_str:
             if not re.match(f"^{regex_pythonic_slice}$", string):
                 return f"'{string}'"
         return string
@@ -64,12 +56,17 @@ class Transpiler:
 
     def get_pyp_args(self):
         expandable_list_init = f"{FIELD_VAR_NAME} = {ExpandableList.__name__}();"
-        if self.has_header:
-            expandable_list_init += f"{FIELD_VAR_NAME}._set_header_content(next(sys.stdin).rstrip('\\n').split(','), extra_headers={self.extra_headers});"
+        if self.args.has_header:
+            expandable_list_init += (
+                f"{FIELD_VAR_NAME}."
+                f"{ExpandableList._set_header_content.__name__}"
+                f"(next(sys.stdin)."
+                f"rstrip('\\n').split(','), extra_headers={self.extra_headers});"
+            )
             expandable_list_init += self.get_print_field_statement()
 
         pyp_args = []
-        if self.select_field is not None:
+        if self.args.select is not None:
             pyp_args.extend(["-b", inspect.getsource(collect_output_fields)])
         pyp_args.extend(
             [
@@ -83,30 +80,19 @@ class Transpiler:
         return pyp_args
 
     def transpile(self, preprocessed_statements: str):
-        is_header_input = "i==0" if self.has_header else "False"
         return f"""\
-{FIELD_VAR_NAME}._set_data(x.split(','))
-#{self.get_header_logic()}
+{FIELD_VAR_NAME}.data = x.split(',')
 {self.get_filter_logic(self.args.filter)}
 {preprocessed_statements}
 {self.get_filter_logic(self.args.after_filter)}
 {self.get_print_field_statement()}
 """
 
-    def get_header_logic(self):
-        """
-        if there is header, skip the csv eval for the header row
-        :return:
-        """
-        if self.has_header:
-            return f"if i == 0: {self.get_print_field_statement()}; continue"
-        return ""
-
     def get_filter_logic(self, filter_str):
         if filter_str is None:
             return ""
         content = preprocess_full_statements(
-            filter_str, use_auto_quote=self.use_auto_quote
+            filter_str, use_auto_quote=self.args.auto_quote_raw_str
         )[0].replace("\n", "")
         return f"if not ({content}): continue"
 
@@ -245,17 +231,14 @@ def preprocess_field_only(statement: str, use_auto_quote: bool) -> [str, List[st
     return preprocessed_code
 
 
-def collect_output_fields(*fields_to_print) -> str:
+def collect_output_fields(*fields_to_print):
     from typing import Iterable
 
-    out = []
     for field in fields_to_print:
         if isinstance(field, Iterable) and not isinstance(field, str):
-            out.extend(field)
+            yield from field
         else:
-            out.append(field)
-    return ",".join(out)
-    # return ",".join(map(str, out))
+            yield field
 
 
 def replace_raw_string_inside_square_bracket(content):

@@ -1,5 +1,5 @@
-from collections import UserList
 import logging
+from collections import UserList
 
 LOGGER = logging.getLogger("csv-eval")
 
@@ -42,15 +42,12 @@ class ExpandableList(UserList):
         )
 
     def _set_header_content(self, content, extra_headers):
-        self._set_data(content)
+        self.data = content
         self._extra_headers = extra_headers
         self._stored_header = {
             key: i for i, key in enumerate(self.data + self._extra_headers)
         }
         self.extend(self._extra_headers)
-
-    def _set_data(self, content):
-        self.data = content
 
     def __search_for_extra_header_when_headers_are_off(self, index: str):
         # look at the extra header and see if we can find a match
@@ -64,30 +61,31 @@ class ExpandableList(UserList):
         else:
             return len(self) - len(self._extra_headers) + extra_header_idx
 
-    def __setitem__(self, i, item):
-        if isinstance(i, int):
-            if i == len(self):  # jit append
+    def __setitem__(self, idx, item):
+        if isinstance(idx, int):
+            if idx == len(self):  # jit append
                 self.append("")
-        elif isinstance(i, str):
+        elif isinstance(idx, str):
+            # first convert it back to our list index
             if self._stored_header is not None:
-                i = self._stored_header[i]
-
+                idx = self._stored_header[idx]
             else:
                 # look at the extra header and see if we can find a match
-                i = self.__search_for_extra_header_when_headers_are_off(i)
+                idx = self.__search_for_extra_header_when_headers_are_off(idx)
 
-            while i >= len(self):
+            while idx >= len(self):
                 self.append("")
-        return super().__setitem__(i, str(item))
+        return super().__setitem__(idx, str(item))
 
-    def __getitem__(self, item):
-        if isinstance(item, str):
+    def __getitem__(self, idx):
+        if isinstance(idx, str):
             if self._stored_header is None:
                 # look at the extra header and see if we can find a match
-                item = self.__search_for_extra_header_when_headers_are_off(item)
+                idx = self.__search_for_extra_header_when_headers_are_off(idx)
             else:
-                item = self._stored_header[item]
-        return super().__getitem__(item)
+                # directly retrieve it from our dict
+                idx = self._stored_header[idx]
+        return super().__getitem__(idx)
 
     def __repr__(self):
         # skip using custom getitem

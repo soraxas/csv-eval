@@ -5,10 +5,9 @@ import sys
 import argcomplete
 import pyp
 
-from csv_eval.utils import LOGGER
 from csv_eval._impl import preprocess_full_statements, Transpiler
 from csv_eval._version import __version__
-
+from csv_eval.utils import LOGGER
 
 parser = argparse.ArgumentParser()
 parser.add_argument("statements", type=str, help="Python eval statements", nargs="?")
@@ -16,7 +15,7 @@ parser.add_argument("-s", "--select", type=str)
 parser.add_argument("-n", "--no-header", dest="has_header", action="store_false")
 parser.add_argument("-e", "--explain", action="store_true")
 parser.add_argument(
-    "--no-auto-quote-str-indexer", dest="auto_quote_str_indexer", action="store_false"
+    "--no-auto-quote-raw-str", dest="auto_quote_raw_str", action="store_false"
 )
 parser.add_argument("--version", action="version", version=f"csv-eval {__version__}")
 parser.add_argument("--debug", action="store_true")
@@ -37,7 +36,7 @@ parser.add_argument(
 
 
 def run():
-    # argcomplete.autocomplete(parser)
+    argcomplete.autocomplete(parser)
     _args = parser.parse_args()
     if sys.stdin.isatty() and not _args.explain:
         parser.print_usage()
@@ -57,16 +56,10 @@ def run():
 
     LOGGER.debug("Input statement was %s", _args.statements)
 
-    transpiler = Transpiler(
-        _args,
-        select_field=_args.select,
-        has_header=_args.has_header,
-        use_auto_quote=_args.auto_quote_str_indexer,
-        filter_str=_args.filter,
-    )
+    transpiler = Transpiler(_args)
 
     processed_statements, new_cols_headers = preprocess_full_statements(
-        _args.statements, _args.auto_quote_str_indexer
+        _args.statements, _args.auto_quote_raw_str
     )
     transpiler.add_extra_headers(new_cols_headers)
     full_transpiled_code = transpiler.transpile(processed_statements)
