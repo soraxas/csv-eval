@@ -40,6 +40,9 @@ class ExpandableList(UserList):
             proxied_obj=self,
             access_cast=str,
         )
+        import sys, csv
+
+        self.csv_writer = csv.writer(sys.stdout)
 
     def _set_header_content(self, content, extra_headers):
         self.data = content
@@ -86,6 +89,13 @@ class ExpandableList(UserList):
                 # directly retrieve it from our dict
                 idx = self._stored_header[idx]
         return super().__getitem__(idx)
+
+    def print_field(self, *indices):
+        if len(indices) > 0:
+            data = (self[i] for i in indices)
+        else:
+            data = self.data
+        self.csv_writer.writerow(data)
 
     def __repr__(self):
         # skip using custom getitem

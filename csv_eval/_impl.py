@@ -18,14 +18,21 @@ from csv_eval.utils import FIELD_VAR_NAME, ExpandableList
 from csv_eval.utils import LOGGER
 
 
+def parse_line_with_csvreader(variable_token: str) -> str:
+    # instead of using navie string split; use the std csv reader to parse one line
+    return f"next(csv.reader(({variable_token}, )))"
+
+
 class Transpiler:
     def __init__(
         self,
         args: argparse.Namespace,
+        custom_headers: Optional[List[str]] = None,
     ):
         self.args = args
         self._print_field_statement = None
         self.extra_headers = []
+        self.custom_headers = custom_headers
 
     @lru_cache(maxsize=32)
     def get_print_field_statement(self):
@@ -34,15 +41,17 @@ class Transpiler:
 
             if self.args.auto_quote_raw_str:
                 fields_idx_to_print = (self.auto_quote(s) for s in fields_idx_to_print)
-            _collected_print_statement = ",".join(
-                f"{FIELD_VAR_NAME}[{i}]" for i in fields_idx_to_print
-            )
+            _collected_print_statement = ",".join(f"{i}" for i in fields_idx_to_print)
+            # _print_field_statement = (
+            #     f"print({collect_output_fields.__name__}"
+            #     f"({_collected_print_statement}))"
+            # )
             _print_field_statement = (
-                f"print(','.join({collect_output_fields.__name__}"
-                f"({_collected_print_statement})))"
+                f"{FIELD_VAR_NAME}.print_field({_collected_print_statement})"
             )
         else:
-            _print_field_statement = f"print({FIELD_VAR_NAME})"
+            # _print_field_statement = f"print({FIELD_VAR_NAME})"
+            _print_field_statement = f"{FIELD_VAR_NAME}.print_field()"
         return _print_field_statement
 
     def auto_quote(self, string):
@@ -57,12 +66,13 @@ class Transpiler:
     def get_pyp_args(self):
         expandable_list_init = f"{FIELD_VAR_NAME} = {ExpandableList.__name__}();"
         if self.args.has_header:
-            expandable_list_init += (
-                f"{FIELD_VAR_NAME}."
-                f"{ExpandableList._set_header_content.__name__}"
-                f"(next(sys.stdin)."
-                f"rstrip('\\n').split(','), extra_headers={self.extra_headers});"
-            )
+            if self.custom_headers is None:
+                _headers = parse_line_with_csvreader("next(sys.stdin)")
+            else:
+                _headers = self.custom_headers
+                expandable_list_init += "next(sys.stdin);"
+            expandable_list_init += f"{FIELD_VAR_NAME}._set_header_content({_headers}, extra_headers={self.extra_headers});"
+            # expandable_list_init += f"{FIELD_VAR_NAME}._set_header_content(next(sys.stdin).rstrip('\\n').split(','), extra_headers={self.extra_headers});"
             expandable_list_init += self.get_print_field_statement()
 
         pyp_args = []
@@ -81,7 +91,8 @@ class Transpiler:
 
     def transpile(self, preprocessed_statements: str):
         return f"""\
-{FIELD_VAR_NAME}.data = x.split(',')
+{FIELD_VAR_NAME}._set_data({parse_line_with_csvreader('x')})
+#{self.get_header_logic()}
 {self.get_filter_logic(self.args.filter)}
 {preprocessed_statements}
 {self.get_filter_logic(self.args.after_filter)}
